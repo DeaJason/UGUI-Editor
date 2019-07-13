@@ -45,6 +45,11 @@ namespace U3DExtends
         public static Vector2 UITestNodeSize = new Vector2(4, 4);
         public const string FolderName = "UGUI-Editor";
         public static string ResAssetsPath = Application.dataPath + "/" + FolderName + "/Res";
+        public static string PreviewCanvasName = "PreviewCanvasName";
+        /// <summary>
+        /// Prefab预览图目录地址
+        /// </summary>
+        public static string PrefabPreviewResAssetsPath = Application.dataPath +"/../" + FolderName + "/Preview";
 
         static string projectUUID = string.Empty;
         public static string ProjectUUID

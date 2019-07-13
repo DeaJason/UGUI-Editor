@@ -410,6 +410,7 @@ namespace U3DExtends
             RenderTexture.active = rt;
             Texture2D png = new Texture2D(rt.width, rt.height, TextureFormat.ARGB32, false);
             png.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0);
+            png.Apply();
             byte[] bytes = png.EncodeToPNG();
             string directory = Path.GetDirectoryName(save_file_name);
             if (!Directory.Exists(directory))
@@ -418,6 +419,7 @@ namespace U3DExtends
             BinaryWriter writer = new BinaryWriter(file);
             writer.Write(bytes);
             file.Close();
+            writer.Close();
             Texture2D.DestroyImmediate(png);
             png = null;
             RenderTexture.active = prev;
@@ -465,18 +467,28 @@ namespace U3DExtends
         public static Texture GetAssetPreview(GameObject obj)
         {
             GameObject canvas_obj = null;
+            Canvas canvasCom = null;
             GameObject clone = GameObject.Instantiate(obj);
+            clone.SetActive(true);
             Transform cloneTransform = clone.transform;
+
             bool isUINode = false;
             if (cloneTransform is RectTransform)
             {
                 //如果是UGUI节点的话就要把它们放在Canvas下了
-                canvas_obj = new GameObject("render canvas", typeof(Canvas));
-                Canvas canvas = canvas_obj.GetComponent<Canvas>();
+                GameObject root = GameObject.Find(Configure.PreviewCanvasName);
+                if (root == null)
+                {
+                    root = new GameObject(Configure.PreviewCanvasName);
+                }
+                canvas_obj = new GameObject(obj.name + "_Canvas", typeof(Canvas));
+                canvas_obj.transform.SetParent(root.transform,true);
+                canvasCom = canvas_obj.GetComponent<Canvas>();
                 cloneTransform.SetParent(canvas_obj.transform);
                 cloneTransform.localPosition = Vector3.zero;
-
-                canvas_obj.transform.position = new Vector3(-1000, -1000, -1000);
+                int index = canvas_obj.transform.GetSiblingIndex();
+                canvas_obj.transform.position = new Vector3(-1000 * index, -1000, -1000);
+                Debug.LogWarning("canvas_obj.transform.position: " + canvas_obj.transform.position.ToString());
                 canvas_obj.layer = 21;//放在21层，摄像机也只渲染此层的，避免混入了奇怪的东西
                 isUINode = true;
             }
@@ -497,43 +509,85 @@ namespace U3DExtends
             Camera renderCamera = cameraObj.AddComponent<Camera>();
             renderCamera.backgroundColor = new Color(0.8f, 0.8f, 0.8f, 1f);
             renderCamera.clearFlags = CameraClearFlags.Color;
-            renderCamera.cameraType = CameraType.Preview;
+            renderCamera.cameraType = CameraType.SceneView;
             renderCamera.cullingMask = 1 << 21;
             if (isUINode)
             {
-                cameraObj.transform.position = new Vector3((Max.x + Min.x) / 2f, (Max.y + Min.y) / 2f, cloneTransform.position.z-100);
-                Vector3 center = new Vector3(cloneTransform.position.x+0.01f, (Max.y + Min.y) / 2f, cloneTransform.position.z);//+0.01f是为了去掉Unity自带的摄像机旋转角度为0的打印，太烦人了
-                cameraObj.transform.LookAt(center);
-
+                canvas_obj.transform.position = new Vector3((int)bounds.size.x, (int)bounds.size.y, -1000);
+                cameraObj.transform.SetParent(canvas_obj.transform);
+                //cameraObj.transform.position = new Vector3((Max.x + Min.x) / 2f, (Max.y + Min.y) / 2f, cloneTransform.position.z - 100);
+                cameraObj.transform.position = new Vector3(cloneTransform.position.x, cloneTransform.position.y, cloneTransform.position.z - 100);
+                Vector3 center = new Vector3(cloneTransform.position.x + 0.01f, (Max.y + Min.y) / 2f, cloneTransform.position.z);//+0.01f是为了去掉Unity自带的摄像机旋转角度为0的打印，太烦人了
+                                                                                                                                 //cameraObj.transform.LookAt(center);
+                                                                                                                                 //cameraObj.transform.SetParent(canvas_obj.transform);
+                canvasCom.renderMode = RenderMode.ScreenSpaceCamera;
+                canvasCom.worldCamera = renderCamera;
                 renderCamera.orthographic = true;
                 float width = Max.x - Min.x;
                 float height = Max.y - Min.y;
                 float max_camera_size = width > height ? width : height;
+                Debug.LogWarning("width: " + width.ToString() + "height: " + height.ToString());
                 renderCamera.orthographicSize = max_camera_size / 2;//预览图要尽量少点空白
+                int index = canvas_obj.transform.GetSiblingIndex();
+                canvas_obj.transform.position = new Vector3(-5000 * index, -1000, -1000);
             }
             else
             {
                 cameraObj.transform.position = new Vector3((Max.x + Min.x) / 2f, (Max.y + Min.y) / 2f, Max.z + (Max.z - Min.z));
-                Vector3 center = new Vector3(cloneTransform.position.x+0.01f, (Max.y + Min.y) / 2f, cloneTransform.position.z);
+                Vector3 center = new Vector3(cloneTransform.position.x + 0.01f, (Max.y + Min.y) / 2f, cloneTransform.position.z);
                 cameraObj.transform.LookAt(center);
 
                 int angle = (int)(Mathf.Atan2((Max.y - Min.y) / 2, (Max.z - Min.z)) * 180 / 3.1415f * 2);
                 renderCamera.fieldOfView = angle;
             }
-            RenderTexture texture = new RenderTexture(128, 128, 0, RenderTextureFormat.Default);
+            RenderTexture texture = new RenderTexture((int)bounds.size.x, (int)bounds.size.y, 0, RenderTextureFormat.Default);
+            //RenderTexture texture = new RenderTexture(128, 128, 0, RenderTextureFormat.ARGB32);
             renderCamera.targetTexture = texture;
 
-            Undo.DestroyObjectImmediate(cameraObj);
-            Undo.PerformUndo();//不知道为什么要删掉再Undo回来后才Render得出来UI的节点，3D节点是没这个问题的，估计是Canvas创建后没那么快有效？
-            renderCamera.RenderDontRestore();
-            RenderTexture tex = new RenderTexture(128, 128, 0, RenderTextureFormat.Default);
-            Graphics.Blit(texture, tex);
+            //Undo.DestroyObjectImmediate(cameraObj);
+            //Undo.PerformUndo();//不知道为什么要删掉再Undo回来后才Render得出来UI的节点，3D节点是没这个问题的，估计是Canvas创建后没那么快有效？
+            renderCamera.Render();
+            //renderCamera.RenderDontRestore();
+            //RenderTexture tex = new RenderTexture((int)bounds.size.x, (int)bounds.size.y, 0, RenderTextureFormat.Default);
+            //Graphics.Blit(texture, tex);
 
-            Object.DestroyImmediate(canvas_obj);
-            Object.DestroyImmediate(cameraObj);
-            return tex;
+            //Object.DestroyImmediate(canvas_obj);
+            //Object.DestroyImmediate(cameraObj);
+            //Canvas.ForceUpdateCanvases();
+            string folderName = Application.dataPath + "UGUI-Editor/Res/Preview/";
+            //RenderTexture temp = RenderTexture.GetTemporary(texture.width, texture.height, 0, RenderTextureFormat.ARGB32);
+            //Graphics.Blit(texture, temp);
+            return texture;
         }
 
+        static public Texture2D SaveRenderToPng(Texture renderT, string folderName, string name)
+        {
+            int width = renderT.width;
+            int height = renderT.height;
+            Texture2D tex2d = new Texture2D(width, height, TextureFormat.ARGB32, false);
+            RenderTexture.active = (RenderTexture)renderT;
+            tex2d.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+            tex2d.Apply();
+
+            byte[] b = tex2d.EncodeToPNG();
+            string sysPath = folderName;
+            if (!Directory.Exists(sysPath))
+                Directory.CreateDirectory(sysPath);
+            string path = sysPath + "/" + name + GetTimeName() + ".png";
+            FileStream file = File.Open(path, FileMode.Create);
+            BinaryWriter writer = new BinaryWriter(file);
+            writer.Write(b);
+            file.Close();
+
+            return tex2d;
+        }
+        static public string GetTimeName()
+        {
+            return System.DateTime.Now.Year.ToString() + System.DateTime.Now.Month.ToString() +
+                System.DateTime.Now.Day.ToString() + System.DateTime.Now.Hour.ToString() +
+                System.DateTime.Now.Minute.ToString() + System.DateTime.Now.Second.ToString() +
+                System.DateTime.Now.Millisecond.ToString();
+        }
         public static Bounds GetBounds(GameObject obj)
         {
             Vector3 Min = new Vector3(99999, 99999, 99999);
@@ -561,6 +615,12 @@ namespace U3DExtends
             else
             {
                 RectTransform[] rectTrans = obj.GetComponentsInChildren<RectTransform>();
+                ILayoutController[] layoutControllers = obj.GetComponentsInChildren<ILayoutController>();
+                if (layoutControllers.Length > 0)
+                {
+                    //有自动布局
+                    LayoutRebuilder.ForceRebuildLayoutImmediate(obj.transform as RectTransform);
+                }
                 Vector3[] corner = new Vector3[4];
                 for (int i = 0; i < rectTrans.Length; i++)
                 {
